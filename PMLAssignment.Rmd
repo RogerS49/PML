@@ -1,0 +1,203 @@
+---
+title: "Practical Machine Learning Assignment"
+output: 
+   html_document
+---
+
+```{r echo=FALSE, message=FALSE,results='hide',warning=FALSE}
+library(caret)
+library(doParallel)
+library(gbm)
+```
+
+```{r echo=FALSE, cache=TRUE}
+#if (!dir.exists("./data")) dir.create("./data", mode="0755")
+fileurl <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+fileurl2 <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+#download.file(fileurl,dest="./data/pml-training.csv", method ="curl")
+#download.file(fileurl2,dest="./data/pml-testing.csv", method ="curl")
+pmlTrainingData <- read.csv("./data/pml-training.csv", stringsAsFactors=FALSE)
+pmlTestingData <- read.csv("./data/pml-testing.csv", stringsAsFactors=FALSE)
+inTrain = createDataPartition(pmlTrainingData$classe, p =0.6)[[1]]
+training = pmlTrainingData[ inTrain,]
+testing = pmlTrainingData[-inTrain,]
+
+# saveRDS(myVariableName, file="myFile.rds")
+# myVariableName = readRDS("myFile.rds")
+if (file.exists("./my_gbm_file_v01.Rds")) modelFit2 <- readRDS("./my_gbm_file_v01.Rds")
+if(file.exists("./my_rf_file_v01.Rds")) modelFit<- readRDS("./my_rf_file_v01.Rds")
+if(file.exists("./my_RRF_file_v01.Rds")) modelFit4<- readRDS("./my_RRF_file_v01.Rds")
+if(file.exists("./my_rf_gbm_gam_file_v01.Rds")) combinedFit<- readRDS("./my_rf_gbm_gam_file_v01.Rds")
+if(file.exists("./my_rf_file_v10.Rds")) modelFit10<- readRDS("./my_rf_file_v10.Rds")
+if(file.exists("./my_rf_file_v11.Rds")) modelFit11<- readRDS("./my_rf_file_v11.Rds")
+
+```
+
+## Summary
+
+The objective of this work is to apply machine learning functions to data captured by a study to quantify Human Activity Recognition. See Qualitative Activity Recognition of Weight Lifting Exercises    http://groupware.les.inf.puc-rio.br/public/papers/2013.Velloso.QAR-WLE.pdf 
+
+The main focus is to predict the values of the classe variable in a given test set pml-testing.csv.
+We are also provided with a data set pml-training.csv to use to train models for the prediction test.
+
+The constraints are to keep the words under 2000 and no more than 4 figures. Which I interpret as 'words' do not include coding and figures are also not coding. Some code has to be shown to make concrete the meaning of the words.
+
+We are able to predict using 12.5% of the variables as predictors and get an Out Of Sample accuracy of 99%
+
+## Data Analysis
+
+The data files pml-training.csv and pml-testing.csv are read into variables pmlTrainingData and pmlTestingData repectively.
+We split the training data into  60/40 training/testing data sets. The testing set is used for cross validation of the model fit generated. 
+
+Thus we have three sets of data, a training set, a testing/validation set, and a questions set ( pml-testing.csv ) from which we predict the assignment answers.
+
+Things to note about the data set, 
+
+1. The data set pmlTestingData ( loaded from pml-testing.csv) has dimensions `r nrow(pmlTestingData)` rows and `r ncol(pmlTestingData)` columns. 
+2. Many columns in pmlTestingdata have no values (NA and "" etc) 
+   + As the result of original data having time windows in which totals and averages are only reported at the change of the window.
+   + So although there maybe values in the training and testing data the question data may not have any values at all 
+   + These therefore can not be used as predictors
+3. There are a few columns used for house keeping which are not indicative of a new data record
+   + These therefore can not be used as predictors
+4. We have 4 instrument positions arm, forearm, belt, and dumbell with measurements in 3 degrees of space (x,y,z),
+   + Giving 36 possible column predictors (features).
+5. There remains a few other columns.
+   + 16 of which each has values so can be included in the set of features.
+   
+
+## Tests To Pick Best Method   
+
+We first generate a model formula using the 'classe' column as a factor with the predictors taken from 4 above. Apply these to the caret package train function for 4 separate methods 'rf', 'gbm',  'gam' combining 'rf' and 'gbm' and lastly 'RRF' 
+
+We train the learning algorythm on the training data (60%), the caret package train function by default randomly subsamples the training data into training and testing data. With the resulting models for each method we cross validate by predicting with the model on the testing (40%) data. We use the confusionMatrix function to get the out of sample error. The in sample error can be calulated by predicting with the model on the training (60%) data and applying the confusionMatrix function. 
+
+```{r echo=FALSE,message=FALSE,warning=FALSE}
+# extract instrument measurements
+toMatch <- paste(c( "^accel", "^gyros","^magnet"),collapse = "|")
+colnumbers <-grep(toMatch,names(pmlTrainingData),ignore.case=TRUE)
+formStr <- paste(names(pmlTrainingData[colnumbers]),collapse="+")
+formStr <- paste("as.factor(classe) ~ ", formStr)
+mdlForm <- as.formula(formStr)
+
+
+#modelFit <- train(mdlForm, method="rf", data=training)
+predict1 <- predict(modelFit, newdata=testing)
+res1<-confusionMatrix(predict1,testing$classe)
+predict1a <- predict(modelFit, newdata=training)
+res1a<-confusionMatrix(predict1a,training$classe)
+
+
+#modelFit2 <- train(mdlForm, method="gbm", data=training)
+predict2 <- predict(modelFit2, newdata=testing)
+res2<-confusionMatrix(predict2,testing$classe)
+predict2a <- predict(modelFit2, newdata=training)
+res2a<-confusionMatrix(predict2a,training$classe)
+
+
+dfCombined <- data.frame(predict1, predict2, y = testing$classe)
+#combinedFit <- train(y ~ ., data = dfCombined, method = "gam")
+predict3 <- predict(combinedFit, newdata = testing)
+res3<-confusionMatrix(predict3,testing$classe)
+predict3a <- predict(combinedFit, newdata = dfCombined)
+res3a<-confusionMatrix(predict3a,dfCombined$y)
+
+library(RRF)
+#modelFit4 <- train(mdlForm, method="RRF", data=training)
+predict4 <- predict(modelFit4, newdata=testing)
+res4<- confusionMatrix(predict4,testing$classe)
+predict4a <- predict(modelFit4, newdata=training)
+res4a<- confusionMatrix(predict4a,training$classe)
+detach("package:RRF")
+
+mdlrf.ise <- res1a$overall[1]
+mdlrf.oose <- res1$overall[1]
+mdlgbm.ise <- res2a$overall[1]
+mdlgbm.oose <- res2$overall[1]
+mdlcomb.ise <- res3a$overall[1]
+mdlcomb.oose <- res3$overall[1]
+mdlrrf.ise <- res4a$overall[1]
+mdlrrf.oose <- res4$overall[1]
+
+```
+
+This gives the 'in sample' and 'out of sample' errors as :
+
+Training Method |  In Sample Error | Out Of Sample Error
+----------------|----------------------------------|-------------------
+rf              | `r 1 - mdlrf.ise`                    | `r 1 - mdlrf.oose`
+gbm             | `r 1 - mdlgbm.ise`                   | `r 1 - mdlgbm.oose`
+gam(rf gbm)     | `r 1 - mdlcomb.ise`                  | `r 1 - mdlcomb.oose`
+rrf             | `r 1 - mdlrrf.ise`                   | `r 1 - mdlrrf.oose`
+
+
+The better performing method is random forest ('rf') with regularised random forest ('RRF') second, however this method took considerably more time to execute.
+
+## Add More Feature To Improve Accuracy and Reduce Overfitting
+
+We take the rf method and apply it to a set of predictors which include the 36 plus the calculated features that have all values from point 5 above, giving a total of 52 predictors/features. We train the model using the rf method and the default resampling 25 times. This yields a model with expected accuracy and from the model we can find the top twenty feature the model used.
+
+
+```{r echo=FALSE}
+formStr10 <- paste(names(pmlTrainingData[c(8,9,10,11,37,38,39,40,41,42,43,44,45,46,47,48,49,60,61,62,63,64,65,66,67,68,84,85,86,102,113,114,115,116,117,118,119,120,121,122,123,124,140,151,152,153,154,155,156,157,158,159)]),collapse="+")
+formStr10 <- paste("as.factor(classe) ~ ", formStr10)
+mdlForm10 <- as.formula(formStr10)
+formula52Predictors <- mdlForm10
+modelFit52Predictors <- modelFit10
+```
+
+```{r} 
+formula52Predictors
+varImp(modelFit52Predictors)
+```
+
+## Use the 20 Best Features Implied by varImp
+
+We next use only these 20 features in the predictor formula. 
+
+```{r echo=FALSE}
+formStr11 <- paste(names(pmlTrainingData[c(8,123,10,121,9,120,122,117,84,154,119,118,45,42,102,159,44,48,39,43)]),collapse="+")
+formStr11 <- paste("as.factor(classe) ~ ", formStr11)
+formula20Predictors <- as.formula(formStr11)
+
+```
+
+We modify the behaviour of the train function to use repeated cross-validation with 10 folds and repeated 10 times and pre-process to be centred and scaled.
+
+```{r}
+formula20Predictors
+```
+
+```{r}
+fitControl <- trainControl(method = "repeatedcv",
+                           number = 10,
+                           repeats = 10,
+                           ## Estimate class probabilities
+                           classProbs = TRUE)
+```
+
+Now when we train in addition to 'rf'; the 60% training data will be subdivied 10 ways (k-folds) with 9 ways used for training and 1 way used for cross-validation within the function. This will be repeated 10 times with 10 different splits to incorporate cross validation into the training control.
+
+```{r eval=FALSE}
+modelFit20Predictors <- train(formula20Predictors,
+            data=training[,c(160,8,123,10,121,9,120,122,117,84,154,119,118,45,42,102,159,44,48,39,43)],             preProcess=c("center","scale"),
+            trControl=fitControl, method="rf")
+```
+
+```{r,echo=FALSE}
+modelFit11
+predict11 <- predict(modelFit11, testing) # testing is cross validation set
+confusn20Predictors <- confusionMatrix(predict11, testing$classe)
+```
+
+Using confusionMatrix with the 20 features the Accuracy is  `r round(confusn20Predictors$overall[[1]] *100,3)`% accuracy and the Out of Sample Error is `r round(1 - confusn20Predictors$overall[[1]],3)` with the training data split 60/40 training and testing data from the pml_training.csv data file. 
+
+``` {r}
+confusn20Predictors
+```
+
+
+## Final Predictions on pml-testing.csv for Submission to Part 2
+
+All except the 'gbm' and 'gam' models produced 100% accuracy in prediction of the pmlTestingData. The 'gbm' model fit produced 19/20 correct answers the 6th problem_id being incorrect.
+
